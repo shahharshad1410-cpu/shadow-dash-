@@ -1,0 +1,254 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="theme-color" content="#09080e">
+<title>Shadow Dash</title>
+<style>
+:root{--bg:#09080e;--gold:#d7b66b;--purple:#9a72ff;--text:#f4f0ff}
+*{box-sizing:border-box}
+body{margin:0;background:radial-gradient(ellipse at top,#211532,transparent 60%),var(--bg);color:var(--text);font-family:system-ui,sans-serif;display:flex;justify-content:center;min-height:100vh;padding:18px 12px;overscroll-behavior:none}
+.app{width:100%;max-width:480px}
+header{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px}
+.brand{font-size:22px;font-weight:900;letter-spacing:3px}
+.brand span{color:var(--gold)}
+.sub{font-size:10px;letter-spacing:3px;color:#938ba6}
+button{border:1px solid #40334e;background:#1b1727;color:#fff;border-radius:12px;padding:12px;font-weight:bold;cursor:pointer}
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px}
+.stat{text-align:center;background:#15111e;border:1px solid #30273e;border-radius:13px;padding:10px}
+.stat small{display:block;color:#938ba6;font-size:9px;letter-spacing:2px}
+.stat strong{display:block;color:var(--gold);font-size:22px;margin-top:4px}
+.arena{position:relative;border:1px solid #493653;border-radius:18px;overflow:hidden;box-shadow:0 0 35px #8a52ff20;touch-action:none}
+canvas{width:100%;height:auto;display:block;touch-action:none}
+.overlay{position:absolute;inset:0;background:#090711d9;backdrop-filter:blur(5px);display:flex;align-items:center;justify-content:center;flex-direction:column;text-align:center;padding:22px}
+.overlay.hidden{display:none}
+.eyebrow{color:var(--gold);font-size:10px;letter-spacing:4px;font-weight:bold}
+h1{font-size:clamp(34px,9vw,48px);line-height:1;margin:15px 0 8px}
+h1 span{color:var(--gold)}
+p{color:#b8afc9;font-size:13px;line-height:1.7;max-width:270px}
+.primary{background:linear-gradient(120deg,#e3c67f,#b99345);color:#17101e;border:0;padding:15px 26px;margin-top:10px}
+.controls{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px}
+.control{min-height:62px}
+.control b{display:block;color:var(--gold)}
+.control small{display:block;color:#938ba6;margin-top:4px;font-size:10px}
+.note{text-align:center;font-size:11px;line-height:1.8;color:#938ba6;margin-top:14px}
+footer{text-align:center;color:#635a73;font-size:10px;letter-spacing:2px;margin-top:20px}
+</style>
+</head>
+<body>
+<main class="app">
+<header>
+<div><div class="brand">SHADOW <span>DASH</span></div><div class="sub">RUN BEYOND THE DARK</div></div>
+<button id="soundBtn" aria-label="Toggle sound">♫</button>
+<button id="pauseBtn" aria-label="Pause game">Ⅱ</button>
+</header>
+
+<section class="stats">
+<div class="stat"><small>SCORE</small><strong id="score">0000</strong></div>
+<div class="stat"><small>COINS</small><strong id="coins">0</strong></div>
+<div class="stat"><small>BEST</small><strong id="best">0000</strong></div>
+</section>
+
+<div class="arena">
+<canvas id="game" width="420" height="600" aria-label="Jump over obstacles and collect coins"></canvas>
+<div class="overlay" id="overlay">
+<div class="eyebrow" id="eyebrow">NIGHT RUNNER SERIES</div>
+<h1 id="title">SHADOW<br><span>DASH.</span></h1>
+<p id="message">Enter the neon night. Dodge obstacles, collect golden coins and beat your high score.</p>
+<button class="primary" id="mainBtn">START RUN ↗</button>
+<p style="font-size:10px">TAP TO JUMP · COLLECT TO SHINE</p>
+</div>
+</div>
+
+<div class="controls">
+<button class="control" id="jumpBtn"><b>↑ JUMP</b><small>Tap to leap</small></button>
+<button class="control" id="restartBtn"><b>↻ RESTART</b><small>Start a new run</small></button>
+</div>
+<div class="note"><b style="color:#c8b7f0">HOW TO PLAY</b><br>Jump over purple obstacles · Collect gold coins<br>Speed increases as your score rises.</div>
+<footer>SHADOW DASH · NEON ARCADE</footer>
+</main>
+
+<script>
+(() => {
+"use strict";
+const $=id=>document.getElementById(id);
+const canvas=$("game"),ctx=canvas.getContext("2d");
+const W=420,H=600,ground=490;
+let state="ready",score=0,coins=0,best=0,speed=240;
+let elapsed=0,last=0,spawn=1,coinSpawn=1,frame=0;
+let obstacles=[],gold=[],particles=[],audio=null,sound=true;
+let stars=Array.from({length:65},()=>({x:Math.random()*W,y:Math.random()*440,r:Math.random()*1.5+.4,p:Math.random()*7}));
+const player={x:78,y:ground-42,w:29,h:42,vy:0,grounded:true};
+
+try{best=Number(localStorage.getItem("shadowDashBest"))||0}catch(e){}
+function rand(a,b){return a+Math.random()*(b-a)}
+function beep(f=500,d=.08){
+ if(!sound)return;
+ try{
+  audio ||= new(window.AudioContext||window.webkitAudioContext)();
+  if(audio.state==="suspended")audio.resume();
+  const o=audio.createOscillator(),g=audio.createGain();
+  o.frequency.value=f;g.gain.setValueAtTime(.06,audio.currentTime);
+  g.gain.exponentialRampToValueAtTime(.001,audio.currentTime+d);
+  o.connect(g);g.connect(audio.destination);o.start();o.stop(audio.currentTime+d);
+ }catch(e){}
+}
+function stats(){
+ $("score").textContent=String(Math.floor(score)).padStart(4,"0");
+ $("coins").textContent=coins;
+ $("best").textContent=String(best).padStart(4,"0");
+}
+function overlay(eyebrow,title,message,button){
+ $("eyebrow").textContent=eyebrow;$("title").innerHTML=title;
+ $("message").textContent=message;$("mainBtn").textContent=button;
+ $("overlay").classList.remove("hidden");
+}
+function hide(){ $("overlay").classList.add("hidden") }
+function start(){
+ score=0;coins=0;elapsed=0;speed=240;spawn=1;coinSpawn=.8;
+ obstacles=[];gold=[];particles=[];
+ player.y=ground-player.h;player.vy=0;player.grounded=true;
+ state="running";last=performance.now();hide();stats();beep(650,.12);
+}
+function pause(){
+ if(state==="running"){
+  state="paused";overlay("TAKE A BREATHER","PAUSE<span>.</span>","Your run is paused. Ready when you are.","RESUME ↗");
+ }else if(state==="paused"){
+  state="running";last=performance.now();hide();
+ }
+}
+function jump(){
+ if(state!=="running"||!player.grounded)return;
+ player.vy=-640;player.grounded=false;beep(430,.08);
+ burst(player.x+15,player.y+40,5,"#b69aff");
+}
+function finish(){
+ state="over";best=Math.max(best,Math.floor(score));
+ try{localStorage.setItem("shadowDashBest",best)}catch(e){}
+ stats();beep(160,.22);
+ overlay("RUN COMPLETE","NIGHT<br><span>FALLS.</span>",`Score: ${Math.floor(score)} · Coins: ${coins}. Try again to beat your best!`,"RUN AGAIN ↗");
+}
+function burst(x,y,n,color){
+ for(let i=0;i<n;i++)particles.push({x,y,vx:rand(-100,100),vy:rand(-140,20),life:.45,max:.45,r:rand(2,4),color});
+}
+function hit(a,b){
+ return a.x+5<b.x+b.w-4&&a.x+a.w-5>b.x+4&&a.y+5<b.y+b.h-3&&a.y+a.h-3>b.y+3;
+}
+function makeObstacle(){
+ const h=rand(30,57),w=rand(27,42);
+ obstacles.push({x:W+5,y:ground-h,w,h});
+}
+function makeCoins(){
+ let n=Math.random()<.5?3:5,base=rand(ground-140,ground-75);
+ for(let i=0;i<n;i++)gold.push({x:W+10+i*34,y:base-Math.sin(i/(n-1)*Math.PI)*25,r:9,p:rand(0,7),taken:false});
+}
+function update(dt){
+ frame+=dt;
+ if(state==="running"){
+  elapsed+=dt;speed=Math.min(490,240+elapsed*4.5);
+  score+=dt*speed/10;
+  player.vy+=1650*dt;player.y+=player.vy*dt;
+  if(player.y+player.h>=ground){player.y=ground-player.h;player.vy=0;player.grounded=true}
+  spawn-=dt;
+  if(spawn<=0){makeObstacle();spawn=Math.max(.68,rand(1,1.55)*240/speed)}
+  coinSpawn-=dt;if(coinSpawn<=0){makeCoins();coinSpawn=rand(1.6,2.5)}
+  const box={x:player.x,y:player.y,w:player.w,h:player.h};
+  for(const o of obstacles){o.x-=speed*dt;if(hit(box,o)){finish();break}}
+  obstacles=obstacles.filter(o=>o.x+o.w>-10);
+  for(const c of gold){
+   c.x-=speed*dt;c.p+=dt*5;
+   if(!c.taken&&Math.hypot(player.x+15-c.x,player.y+21-c.y)<c.r+17){
+    c.taken=true;coins++;score+=25;burst(c.x,c.y,8,"#e8c875");beep(850,.06);
+   }
+  }
+  gold=gold.filter(c=>c.x>-20&&!c.taken);
+ }
+ for(const p of particles){p.x+=p.vx*dt;p.y+=p.vy*dt;p.vy+=240*dt;p.life-=dt}
+ particles=particles.filter(p=>p.life>0);stats();
+}
+function rr(x,y,w,h,r,fill){
+ ctx.fillStyle=fill;ctx.beginPath();ctx.roundRect(x,y,w,h,r);ctx.fill();
+}
+function background(){
+ let g=ctx.createLinearGradient(0,0,0,H);
+ g.addColorStop(0,"#100b1c");g.addColorStop(.65,"#100d1b");g.addColorStop(1,"#08070d");
+ ctx.fillStyle=g;ctx.fillRect(0,0,W,H);
+ for(const s of stars){
+  ctx.globalAlpha=.3+Math.sin(frame*1.5+s.p)*.2;
+  ctx.fillStyle="#e7d9ff";ctx.beginPath();ctx.arc(s.x,s.y,s.r,0,7);ctx.fill();
+ }
+ ctx.globalAlpha=1;
+ const moon=ctx.createRadialGradient(315,140,3,315,140,78);
+ moon.addColorStop(0,"#aa80ff40");moon.addColorStop(1,"#aa80ff00");
+ ctx.fillStyle=moon;ctx.fillRect(230,55,170,170);
+ ctx.strokeStyle="#9e79d966";ctx.beginPath();ctx.arc(315,140,38,0,7);ctx.stroke();
+ for(let x=0;x<W;x+=32){
+  const h=45+(x*17%63);ctx.fillStyle="#151022";ctx.fillRect(x,ground-h,27,h);
+  ctx.fillStyle="#a17bff35";
+  for(let y=ground-h+10;y<ground-8;y+=14){ctx.fillRect(x+6,y,3,4);ctx.fillRect(x+17,y,3,4)}
+ }
+ ctx.fillStyle="#0b0912";ctx.fillRect(0,ground,W,H-ground);
+ ctx.strokeStyle="#9a72ff";ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(0,ground);ctx.lineTo(W,ground);ctx.stroke();
+ ctx.strokeStyle="#45335c";ctx.lineWidth=2;
+ let off=(elapsed*speed)%65;
+ for(let x=-65+off;x<W;x+=65){ctx.beginPath();ctx.moveTo(x,ground+38);ctx.lineTo(x+30,ground+38);ctx.stroke()}
+}
+function drawPlayer(){
+ let p=player;ctx.save();ctx.shadowBlur=18;ctx.shadowColor="#a17aff";
+ rr(p.x,p.y,p.w,p.h,8,"#9a72ff");ctx.shadowBlur=0;
+ rr(p.x+5,p.y+6,p.w-10,p.h-12,5,"#211733");
+ ctx.fillStyle="#e3d7ff";ctx.fillRect(p.x+16,p.y+11,7,3);
+ ctx.fillStyle="#d7b66b";ctx.fillRect(p.x+7,p.y+p.h-8,p.w-14,3);
+ let step=state==="running"&&p.grounded?Math.sin(elapsed*18)*4:0;
+ ctx.fillStyle="#6b4ca9";ctx.fillRect(p.x+5,p.y+p.h-2,7,8+step);ctx.fillRect(p.x+18,p.y+p.h-2,7,8-step);
+ ctx.restore();
+}
+function render(){
+ background();
+ for(const c of gold){
+  ctx.save();ctx.shadowBlur=14;ctx.shadowColor="#d7b66b";ctx.fillStyle="#e6c879";
+  ctx.beginPath();ctx.arc(c.x,c.y,c.r*(.8+Math.abs(Math.sin(c.p))*.2),0,7);ctx.fill();
+  ctx.shadowBlur=0;ctx.strokeStyle="#775a22";ctx.lineWidth=2;
+  ctx.beginPath();ctx.arc(c.x,c.y,c.r-3,0,7);ctx.stroke();ctx.restore();
+ }
+ for(const o of obstacles){
+  ctx.save();ctx.shadowBlur=13;ctx.shadowColor="#9a45ff";
+  let g=ctx.createLinearGradient(o.x,o.y,o.x+o.w,o.y+o.h);
+  g.addColorStop(0,"#b27cff");g.addColorStop(1,"#4e2389");
+  rr(o.x,o.y,o.w,o.h,5,g);ctx.shadowBlur=0;
+  ctx.strokeStyle="#d2baff";ctx.strokeRect(o.x+5,o.y+5,o.w-10,o.h-10);ctx.restore();
+ }
+ drawPlayer();
+ for(const p of particles){ctx.globalAlpha=Math.max(0,p.life/p.max);ctx.fillStyle=p.color;ctx.beginPath();ctx.arc(p.x,p.y,p.r,0,7);ctx.fill()}
+ ctx.globalAlpha=1;
+ ctx.fillStyle="#a89bbf";ctx.font="10px system-ui";ctx.textAlign="left";
+ ctx.fillText("LEVEL "+(1+Math.floor(elapsed/15)),17,27);
+ ctx.textAlign="right";ctx.fillStyle="#d7b66b";ctx.fillText(Math.floor(speed)+" SPD",W-17,27);ctx.textAlign="left";
+}
+function loop(now){
+ const dt=Math.min((now-last)/1000||0,.033);last=now;
+ update(dt);render();requestAnimationFrame(loop);
+}
+$("mainBtn").onclick=()=>state==="paused"?pause():start();
+$("jumpBtn").addEventListener("pointerdown",e=>{e.preventDefault();if(state==="ready"||state==="over")start();else jump()});
+canvas.addEventListener("pointerdown",e=>{e.preventDefault();if(state==="ready"||state==="over")start();else jump()});
+$("restartBtn").onclick=start;$("pauseBtn").onclick=pause;
+$("soundBtn").onclick=()=>{
+ sound=!sound;$("soundBtn").textContent=sound?"♫":"♪̸";
+ $("soundBtn").style.color=sound?"#d7b66b":"#938ba6";if(sound)beep(600,.08);
+};
+document.addEventListener("keydown",e=>{
+ if(["Space","ArrowUp","KeyW"].includes(e.code)){
+  e.preventDefault();
+  if(state==="ready"||state==="over")start();else if(state==="running")jump();else if(state==="paused")pause();
+ }
+ if(e.code==="Escape"||e.code==="KeyP")pause();
+});
+document.addEventListener("visibilitychange",()=>{if(document.hidden&&state==="running")pause()});
+stats();render();last=performance.now();requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
